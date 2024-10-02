@@ -25,6 +25,7 @@ def make_request(sess, url, method, body=None, params=None, headers=None):
         headers = {}
 
     headers["Content-Type"] = "application/json"
+    headers['Accept'] = 'application/json; version=4'
 
     try:
         r = sess.request(method, headers=headers, url=url, params=params, data=body, timeout=TIMEOUT, verify=True)
