@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+import random
 
 import requests
 from openai import OpenAI
@@ -36,7 +37,50 @@ def check_args(doc_pk):
         sys.exit(1)
 
 
-def generate_title(content, openai_model, openai_key, openai_base_url):
+def generate_random_hex_color():
+    """Generates a random hex color string."""
+    return "#{:06x}".format(random.randint(0, 0xFFFFFF))
+
+def create_new_tag(sess, tag_name, paperless_url):
+    """Creates a new tag in Paperless with a random color and returns its ID."""
+    url = paperless_url + "/api/tags/"
+    body = {
+        "name": tag_name,
+        "color": generate_random_hex_color()  # Assign random color to the tag
+    }
+    response = make_request(sess, url, "POST", body=body)
+    if not response:
+        logging.error(f"could not create tag {tag_name}")
+        return None
+    logging.info(f"created new tag: {tag_name} with color {body['color']}")
+    return response['id']
+
+def get_existing_tags(sess, paperless_url):
+    """Retrieves all existing tags from Paperless."""
+    url = paperless_url + "/api/tags/"
+    response = make_request(sess, url, "GET")
+    if not response:
+        logging.error("could not retrieve tags")
+        return {}
+    return {tag['name']: tag['id'] for tag in response['results']}
+
+def get_or_create_tags(sess, tags, paperless_url):
+    """Checks if tags exist; if not, creates them with random colors. Returns list of tag IDs."""
+    existing_tags = get_existing_tags(sess, paperless_url)
+    tag_ids = []
+    
+    for tag in tags:
+        if tag in existing_tags:
+            logging.info(f"tag {tag} already exists with id {existing_tags[tag]}")
+            tag_ids.append(existing_tags[tag])
+        else:
+            new_tag_id = create_new_tag(sess, tag, paperless_url)
+            if new_tag_id:
+                tag_ids.append(new_tag_id)
+    
+    return tag_ids
+
+def generate_title_and_tags(content, openai_model, openai_key, openai_base_url):
     character_limit = get_character_limit(openai_model)
     now = datetime.now()
     messages = [
@@ -49,6 +93,7 @@ def generate_title(content, openai_model, openai_key, openai_base_url):
                             openai_base_url=openai_base_url,
                             mock=False)
     try:
+        logging.info(f"response openai {response}, {response.choices[0].message.content}")
         answer = response.choices[0].message.content
     except:
         return None
@@ -79,19 +124,26 @@ def set_auth_tokens(session: requests.Session, api_key):
 def parse_response(response):
     try:
         data = json.loads(response)
+        logging.info(data)
     except:
-        return None, None
-    return data['title'], data.get('explanation', "")
+        return None, None, None
+    return data['title'], data.get('explanation', ""), data.get('tags', [])
 
 
-def update_document_title(sess, doc_pk, title, paperless_url):
+def update_document_title_and_tags(sess, doc_pk, title, tags, paperless_url):
+    """Updates the document title and assigns tag IDs to the document."""
+    tag_ids = get_or_create_tags(sess, tags, paperless_url)
+    if not tag_ids:
+        logging.error(f"could not retrieve or create tags for document {doc_pk}")
+        return
+    
     url = paperless_url + f"/api/documents/{doc_pk}/"
-    body = {"title": title}
+    body = {"title": title, "tags": tag_ids}
     resp = make_request(sess, url, "PATCH", body=body)
     if not resp:
-        logging.error(f"could not update document {doc_pk} title to {title}")
+        logging.error(f"could not update document {doc_pk} title and tags to {title}, {tags}")
         return
-    logging.info(f"updated document {doc_pk} title to {title}")
+    logging.info(f"updated document {doc_pk} title to {title} and added tags {tags}")
 
 
 def process_single_document(
@@ -104,19 +156,20 @@ def process_single_document(
         openai_key,
         openai_base_url,
         dry_run=False):
-    response = generate_title(doc_contents, openai_model, openai_key, openai_base_url)
+    """Processes a single document: generates a title and tags, then updates the document."""
+    response = generate_title_and_tags(doc_contents, openai_model, openai_key, openai_base_url)
     if not response:
-        logging.error(f"could not generate title for document {doc_pk}")
+        logging.error(f"could not generate title or tags for document {doc_pk}")
         return
-    title, explain = parse_response(response)
+    title, explain, tags = parse_response(response)
     if not title:
         logging.error(f"could not parse response for document {doc_pk}: {response}")
         return
-    logging.info(f"will update document {doc_pk} title from {doc_title} to: {title} because {explain}")
+    logging.info(f"will update document {doc_pk} title from {doc_title} to: {title} because {explain}, with tags {tags}")
 
     # Update the document
     if not dry_run:
-        update_document_title(sess, doc_pk, title, paperless_url)
+        update_document_title_and_tags(sess, doc_pk, title, tags, paperless_url)
 
 
 def get_single_document(sess, doc_pk, paperless_url):
