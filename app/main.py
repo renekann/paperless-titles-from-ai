@@ -36,6 +36,9 @@ def check_args(doc_pk):
         logging.error("Missing TIMEOUT")
         sys.exit(1)
 
+def get_document_created_date(doc_info):
+    """Returns the created date of the document or None if not available."""
+    return doc_info.get("created_date")
 
 def generate_random_hex_color():
     """Generates a random hex color string."""
@@ -122,12 +125,11 @@ def get_or_create_correspondent(sess, correspondent, paperless_url):
 
 
 def generate_title_tags_and_correspondent(content, openai_model, openai_key, openai_base_url):
-    """Generates title, tags, and correspondent from the document content."""
+    """Generates title, tags, correspondent, and extracts the most relevant date from the content."""
     character_limit = get_character_limit(openai_model)
-    now = datetime.now()
     messages = [
         {"role": "system", "content": PROMPT},
-        {"role": "user", "content": now.strftime("%m/%d/%Y") + " ".join(content[:character_limit].split())}
+        {"role": "user", "content": " ".join(content[:character_limit].split())}
     ]
     response = query_openai(model=openai_model,
                             messages=messages,
@@ -140,6 +142,44 @@ def generate_title_tags_and_correspondent(content, openai_model, openai_key, ope
         return None
     return answer
 
+def get_custom_fields(sess, paperless_url):
+    """Retrieves all existing custom fields from Paperless."""
+    url = paperless_url + "/api/custom_fields/"
+    response = make_request(sess, url, "GET")
+    if not response:
+        logging.error("could not retrieve custom fields")
+        return {}
+    return {field['name']: field['id'] for field in response['results']}
+
+def create_custom_field(sess, field_name, paperless_url):
+    """Creates a new custom field in Paperless and returns its ID."""
+    url = paperless_url + "/api/custom_fields/"
+    body = {
+        "name": field_name,
+        "data_type": "string",
+        "extra_data": 'null'
+    }
+    response = make_request(sess, url, "POST", body=body)
+    if not response:
+        logging.error(f"could not create custom field {field_name}")
+        return None
+    logging.info(f"created new custom field: {field_name}")
+    return response['id']
+
+def get_or_create_custom_field(sess, field_name, paperless_url):
+    """Checks if a custom field exists; if not, creates it and returns its ID."""
+    custom_fields = get_custom_fields(sess, paperless_url)
+    
+    if field_name in custom_fields:
+        logging.info(f"custom field {field_name} already exists with id {custom_fields[field_name]}")
+        return custom_fields[field_name]
+    else:
+        new_field_id = create_custom_field(sess, field_name, paperless_url)
+        if new_field_id:
+            return new_field_id
+        else:
+            logging.error(f"could not create or find custom field {field_name}")
+            return None
 
 def query_openai(model, messages, openai_key, openai_base_url, **kwargs):
     client = OpenAI(api_key=openai_key, base_url=openai_base_url)
@@ -163,16 +203,17 @@ def set_auth_tokens(session: requests.Session, api_key):
 
 
 def parse_response(response):
-    """Parses the response to extract title, explanation, tags, and correspondent."""
+    """Parses the response to extract title, explanation, tags, correspondent, and created_date."""
     try:
         data = json.loads(response)
     except:
-        return None, None, None, None
-    return data['title'], data.get('explanation', ""), data.get('tags', []), data.get('correspondent', "")
+        return None, None, None, None, None, None
+    return data['title'], data.get('explanation', ""), data.get('tags', []), data.get('correspondent', ""), data.get('created_date', ""), data.get('summary', "")
 
 
-def update_document_title_tags_and_correspondent(sess, doc_pk, title, tags, correspondent, paperless_url):
+def update_document_title_tags_and_correspondent(sess, doc_pk, title, tags, correspondent, created_date, paperless_url):
     """Updates the document title, tags, and correspondent."""
+    
     # Get or create the correspondent and its ID
     correspondent_id = get_or_create_correspondent(sess, correspondent, paperless_url)
     if not correspondent_id:
@@ -194,6 +235,17 @@ def update_document_title_tags_and_correspondent(sess, doc_pk, title, tags, corr
         return
     logging.info(f"updated document {doc_pk} title to {title}, added tags {tags}, and correspondent {correspondent}")
 
+def update_document_with_custom_fields(sess, doc_pk, custom_field_id, summary_value, paperless_url):
+    """Updates the document with the generated summary in the custom field."""
+    url = paperless_url + f"/api/documents/{doc_pk}/"
+    body = {
+        "custom_fields": [{"field": custom_field_id, "value": summary_value}]
+    }
+    resp = make_request(sess, url, "PATCH", body=body)
+    if not resp:
+        logging.error(f"could not update document {doc_pk} with custom field {custom_field_id} and value {summary_value}")
+        return
+    logging.info(f"updated document {doc_pk} with summary: {summary_value}")
 
 def process_single_document(
         sess,
@@ -205,20 +257,47 @@ def process_single_document(
         openai_key,
         openai_base_url,
         dry_run=False):
-    """Processes a single document: generates a title, tags, and correspondent, then updates the document."""
+    """Processes a single document: generates a title, tags, correspondent, and summary, then updates the document."""
+    
+    # Get document information, including created date
+    doc_info = get_single_document(sess, doc_pk, paperless_url)
+    if not doc_info:
+        logging.error(f"could not retrieve document info for document {doc_pk}")
+        return
+
+    # Call OpenAI to generate title, tags, correspondent, created_date, explanation, and summary
     response = generate_title_tags_and_correspondent(doc_contents, openai_model, openai_key, openai_base_url)
     if not response:
-        logging.error(f"could not generate title, tags, or correspondent for document {doc_pk}")
+        logging.error(f"could not generate title, tags, correspondent, or summary for document {doc_pk}")
         return
-    title, explain, tags, correspondent = parse_response(response)
-    if not title:
+    
+    # Parse response from OpenAI
+    title, explain, tags, correspondent, suggested_created_date, summary = parse_response(response)
+    if not title or not summary:
         logging.error(f"could not parse response for document {doc_pk}: {response}")
         return
-    logging.info(f"will update document {doc_pk} title from {doc_title} to: {title} because {explain}, with tags {tags} and correspondent {correspondent}")
+    
+    # Determine the final created date to use (existing created_date or suggested one)
+    created_date = get_document_created_date(doc_info) or suggested_created_date or datetime.now().strftime('%Y-%m-%d')
+    
+    # Combine the final created date with the title
+    full_title = f"{created_date} - {title}"
+    
+    logging.info(f"will update document {doc_pk} title from {doc_title} to: {full_title} because {explain}, with tags {tags} and correspondent {correspondent}")
 
-    # Update the document
+    # Update the document title, tags, and correspondent
     if not dry_run:
-        update_document_title_tags_and_correspondent(sess, doc_pk, title, tags, correspondent, paperless_url)
+        update_document_title_tags_and_correspondent(sess, doc_pk, full_title, tags, correspondent, created_date, paperless_url)
+    
+    # Check if the custom field 'summary' exists, create if it doesn't
+    summary_field_id = get_or_create_custom_field(sess, "summary", paperless_url)
+    if not summary_field_id:
+        logging.error(f"could not create or retrieve custom field 'summary' for document {doc_pk}")
+        return
+
+    # Update the document with the generated summary
+    if not dry_run:
+        update_document_with_custom_fields(sess, doc_pk, summary_field_id, summary, paperless_url)
 
 
 def get_single_document(sess, doc_pk, paperless_url):
