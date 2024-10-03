@@ -12,16 +12,16 @@ DEFAULT_PROMPT = """You are an AI model that is responsible for analyzing OCR te
 1. Interpret OCR text and generate a title, up to 5 tags, and a correspondent if possible. Otherwise, generate a random title with the current date and appropriate tags and correspondent.
 2. Respond in a valid JSON format.
 3. Titles for dated documents should begin with "YYYY-MM-DD".
-4. Titles should use lowercase letters and numbers only, except the first letter, which should always be uppercase.
+4. Titles should begin with an uppercase letter and be followed by lowercase letters. Only the first letter of the title must be capitalized.
 5. Do not include special characters, slashes, or leading/trailing spaces.
 6. The maximum length of the title is 32 characters.
-7. Tags should be relevant, lowercase, and separated by commas.
+7. Tags should always be in German language, relevant, lowercase, and separated by commas.
 8. The correspondent should be the name of the individual or organization related to the document.
 9. Specific keywords:
     - Use "Rechnung" for receipts, invoices, and bills.
     - Use "Vertrag" for contracts.
     - Use "Brief" for letters.
-    - Use "Steuer" or "Tax" for tax-related documents.
+    - Use "Steuer" for tax-related documents.
 10. Ensure the title, tags, and correspondent are appropriate to the document content.
 
 ===Input
