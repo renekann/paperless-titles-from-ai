@@ -1,9 +1,11 @@
 import logging
+from urllib.parse import quote
 from helpers import make_request
 
 def get_existing_correspondent(sess, correspondent_name, paperless_url):
     """Checks if a correspondent with the exact name already exists."""
-    url = paperless_url + f"/api/correspondents/?name__iexact={correspondent_name}"
+    encoded_name = quote(correspondent_name)
+    url = paperless_url + f"/api/correspondents/?name__iexact={encoded_name}"
     response = make_request(sess, url, "GET")
     if not response:
         logging.error(f"could not retrieve correspondent {correspondent_name}")
