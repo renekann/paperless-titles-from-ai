@@ -52,3 +52,4 @@ PAPERLESS_URL = os.getenv("PAPERLESS_URL", "http://localhost:8000")
 PAPERLESS_API_KEY = os.getenv("PAPERLESS_API_KEY")
 OPENAI_BASEURL = os.getenv("OPENAI_BASEURL")
 TIMEOUT = 10
+OWNER_NAME = os.getenv("OWNER_NAME", None)

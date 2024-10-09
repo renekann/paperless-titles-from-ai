@@ -108,17 +108,17 @@ def parse_response(response):
         return None, None, None, None, None, None, None
     return data['title'], data.get('explanation', ""), data.get('tags', []), data.get('correspondent', ""), data.get('created_date', ""), data.get('document_type', ""), data.get('summary', "")
 
-def update_document_title_tags_correspondent_and_type(sess, doc_pk, title, tags, correspondent, document_type, paperless_url):
+def update_document_title_tags_correspondent_and_type(sess, doc_pk, title, tags, correspondent, document_type, owner_id, paperless_url):
     """Updates the document with title, tags, correspondent, and document_type."""
     
     # Get or create the correspondent and its ID
-    correspondent_id = get_or_create_correspondent(sess, correspondent, paperless_url)
+    correspondent_id = get_or_create_correspondent(sess, correspondent, paperless_url, owner_id)
     if not correspondent_id:
         logging.error(f"could not retrieve or create correspondent for document {doc_pk}")
         return
 
     # Get or create tags and their IDs
-    tag_ids = get_or_create_tags(sess, tags, paperless_url)
+    tag_ids = get_or_create_tags(sess, tags, paperless_url, owner_id)
     if not tag_ids:
         logging.error(f"could not retrieve or create tags for document {doc_pk}")
         return
@@ -164,6 +164,7 @@ def process_single_document(
         openai_model,
         openai_key,
         openai_base_url,
+        username=None,
         dry_run=False):
     """Processes a single document: generates a title, tags, correspondent, document_type, summary, and handles created_date logic."""
     
@@ -172,6 +173,11 @@ def process_single_document(
     if not doc_info:
         logging.error(f"could not retrieve document info for document {doc_pk}")
         return
+
+    # Get the owner_id based on the username, if provided
+    owner_id = None
+    if username:
+        owner_id = get_owner_id(sess, username, paperless_url)
 
     # Call OpenAI to generate title, tags, correspondent, created_date, document_type, and summary
     response = generate_title_tags_correspondent_and_type(doc_contents, openai_model, openai_key, openai_base_url)
@@ -190,7 +196,7 @@ def process_single_document(
 
     # Update the document title, tags, correspondent, and document type
     if not dry_run:
-        update_document_title_tags_correspondent_and_type(sess, doc_pk, title, tags, correspondent, document_type, paperless_url)
+        update_document_title_tags_correspondent_and_type(sess, doc_pk, title, tags, correspondent, document_type, owner_id, paperless_url)
     
     # Handle the created_date logic
     paperless_created_date = get_document_created_date(doc_info)
@@ -236,8 +242,22 @@ def run_for_document(doc_pk):
             OPENAPI_MODEL,
             OPENAI_API_KEY,
             OPENAI_BASEURL,
+            OWNER_NAME,
             DRY_RUN
         )
+
+def get_owner_id(sess, username, paperless_url):
+    """Retrieves the owner ID based on the username from the Paperless API."""
+    url = f"{paperless_url}/api/users/?username__iexact={username}"
+    response = make_request(sess, url, "GET")
+    
+    if not response or 'results' not in response or len(response['results']) == 0:
+        logging.error(f"Could not retrieve owner ID for username {username}")
+        return None
+
+    user = response['results'][0]
+    logging.info(f"Owner ID for username {username} is {user['id']}")
+    return user['id']
 
 def set_auth_tokens(session: requests.Session, api_key):
     """Sets authentication tokens for the session."""

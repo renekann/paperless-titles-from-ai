@@ -6,15 +6,17 @@ def generate_random_hex_color():
     import random
     return "#{:06x}".format(random.randint(0, 0xFFFFFF))
 
-def create_new_tag(sess, tag_name, paperless_url):
-    """Creates a new tag in Paperless with a random color and returns its ID."""
+def create_new_tag(sess, tag_name, paperless_url, owner_id):
+    """Creates a new tag in Paperless and returns its ID."""
     url = paperless_url + "/api/tags/"
-    color = generate_random_hex_color()
+    owner_id_or_empty = owner_id or ''
+
     body = {
         "name": tag_name,
-        "color": color,
-        "owner": "3"
+        "color": generate_random_hex_color(),
+        "owner": owner_id_or_empty  # Owner is optional
     }
+        
     response = make_request(sess, url, "POST", body=body)
     if not response:
         logging.error(f"could not create tag {tag_name}")
@@ -35,7 +37,7 @@ def get_existing_tag(sess, tag_name, paperless_url):
         return tag['id']
     return None
 
-def get_or_create_tags(sess, tags, paperless_url):
+def get_or_create_tags(sess, tags, paperless_url, owner_id=None):
     """Checks if tags exist; if not, creates them with random colors. Returns list of tag IDs."""
     tag_ids = []
     
@@ -44,7 +46,7 @@ def get_or_create_tags(sess, tags, paperless_url):
         if tag_id:
             tag_ids.append(tag_id)
         else:
-            new_tag_id = create_new_tag(sess, tag, paperless_url)
+            new_tag_id = create_new_tag(sess, tag, paperless_url, owner_id)
             if new_tag_id:
                 tag_ids.append(new_tag_id)
     
