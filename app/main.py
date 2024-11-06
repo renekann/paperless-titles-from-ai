@@ -7,7 +7,7 @@ from datetime import datetime
 
 import requests
 from openai import OpenAI
-from cfg import (OPENAI_API_KEY, OPENAPI_MODEL, PAPERLESS_API_KEY, PAPERLESS_URL, PROMPT, OPENAI_BASEURL, TIMEOUT)
+from cfg import (OPENAI_API_KEY, OPENAPI_MODEL, PAPERLESS_API_KEY, PAPERLESS_URL, PROMPT, OPENAI_BASEURL, TIMEOUT, OWNER_NAME)
 from helpers import make_request, strtobool, get_character_limit
 from tags import get_or_create_tags
 from correspondents import get_or_create_correspondent
